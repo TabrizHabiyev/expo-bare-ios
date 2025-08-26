@@ -1,0 +1,65 @@
+name: Expo Bare iOS Build (Test IPA)
+
+on:
+  workflow_dispatch: {}   # Manuel tetikleme
+
+jobs:
+  ios-build:
+    runs-on: macos-14   # GitHub-hosted Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Expo projesi oluştur + Bare'e çıkar
+      - name: Create Expo app and prebuild
+        run: |
+          npx create-expo-app@latest myapp --template blank --yes
+          cd myapp
+          npx expo prebuild --non-interactive
+
+      - name: Install CocoaPods & Fastlane
+        run: |
+          sudo gem install cocoapods fastlane
+          cd myapp/ios && pod install --repo-update
+
+      # Sertifika & provisioning profile çek (development)
+      - name: Setup Signing
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        run: |
+          cd myapp
+          fastlane match development --readonly
+
+      # IPA üret
+      - name: Build Development IPA
+        run: |
+          cd myapp
+          mkdir -p fastlane
+          cat > fastlane/Fastfile <<'RUBY'
+          default_platform(:ios)
+
+          platform :ios do
+            desc "Build dev IPA"
+            lane :dev_ipa do
+              match(type: "development", readonly: true)
+              build_app(
+                scheme: "myapp",
+                workspace: "ios/myapp.xcworkspace",
+                export_method: "development",
+                output_directory: "build",
+                output_name: "MyApp-Dev.ipa"
+              )
+            end
+          end
+          RUBY
+          fastlane ios dev_ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-dev-ipa
+          path: myapp/build/*.ipa
